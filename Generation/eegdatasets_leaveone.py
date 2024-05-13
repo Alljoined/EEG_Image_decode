@@ -1,20 +1,14 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 import numpy as np
 import os
 import clip
 from torch.nn import functional as F
-import torch.nn as nn
-from torchvision import transforms
 from PIL import Image
-import requests
 
 import os
-proxy = 'http://10.16.35.10:13390'
-os.environ['http_proxy'] = proxy
-os.environ['https_proxy'] = proxy
 
-device = "cuda:5" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 # vlmodel, preprocess = clip.load("ViT-B/32", device=device)
 model_type = 'ViT-H-14'
 # import open_clip
