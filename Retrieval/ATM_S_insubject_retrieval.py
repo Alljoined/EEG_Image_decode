@@ -1,34 +1,20 @@
 import os
-
 import torch
-import torch.optim as optim
-from torch.nn import CrossEntropyLoss
-from torch.nn import functional as F
-from torch.optim import Adam
 from torch.utils.data import DataLoader
-
-os.environ["WANDB_API_KEY"] = "KEY"
-os.environ["WANDB_MODE"] = 'offline'
-from itertools import combinations
-
-import clip
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn as nn
-import torchvision.transforms as transforms
-import tqdm
 from eegdatasets_leaveone import EEGDataset
-from einops.layers.torch import Rearrange, Reduce
+from einops.layers.torch import Rearrange
 from lavis.models.clip_models.loss import ClipLoss
-from sklearn.metrics import confusion_matrix
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 import random
 from utils import wandb_logger
-from braindecode.models import EEGNetv4, ATCNet, EEGConformer, EEGITNet, ShallowFBCSPNet
 import csv
 from torch import Tensor
 import itertools
 import math
+import datetime
 
 class PositionalEncoding(nn.Module):
     def __init__(self, d_model, max_len=5000):
@@ -480,12 +466,11 @@ def main_train_loop(sub, current_time, eeg_model, img_model, train_dataloader, t
     logger.finish()
     return results
 
-import datetime
 def main():  
     config = {
-        "data_path": "/home/ldy/Workspace/THINGS/Preprocessed_data_250Hz",
-        "project": "train_pos_img_text_rep",
-        "entity": "sustech_rethinkingbci",
+        "data_path": "/srv/eeg_reconstruction/shared/things_eeg_2/Preprocessed_data_250Hz",
+        "project": "EEG_image_retrieval",
+        "entity": "alljoined1",
         "name": "lr=3e-4_img_pos_pro_eeg",
         "lr": 3e-4,
         "epochs": 40,
@@ -496,7 +481,7 @@ def main():
         "img_encoder": 'Proj_img'
     }
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     data_path = config['data_path']
     subjects = ['sub-01', 'sub-02', 'sub-03', 'sub-04', 'sub-05', 'sub-06', 'sub-07', 'sub-08', 'sub-09', 'sub-10']
     current_time = datetime.datetime.now().strftime("%m-%d_%H-%M")  

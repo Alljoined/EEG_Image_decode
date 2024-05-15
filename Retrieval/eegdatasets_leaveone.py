@@ -15,7 +15,7 @@ import os
 # os.environ['https_proxy'] = proxy
 cuda_device_count = torch.cuda.device_count()
 print(cuda_device_count)
-device = "cuda:2" if torch.cuda.is_available() else "cpu"
+device = "cuda" if torch.cuda.is_available() else "cpu"
 # vlmodel, preprocess = clip.load("ViT-B/32", device=device)
 model_type = 'ViT-H-14'
 import open_clip

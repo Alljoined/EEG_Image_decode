@@ -27,3 +27,8 @@ Retrieval/Outputs
 Retrieval/sliding_window_outputs
 Retrieval/Visualize
 Retrieval/wandb
+
+*.pyc
+*.pt
+*.pth
+Retrieval/__pycache__/utils.cpython-310.pyc
