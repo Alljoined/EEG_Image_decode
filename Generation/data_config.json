@@ -1,7 +1,6 @@
 {
-    "data_path": "/srv/eeg_reconstruction/shared/things_eeg_2/Preprocessed_data_250Hz",
-    "img_directory_training": "/srv/eeg_reconstruction/shared/things_eeg_2/y63gw/osfstorage/training_images",
-    "img_directory_test": "/srv/eeg_reconstruction/shared/things_eeg_2/y63gw/osfstorage/test_images",
-    "features_path":"/weka/proj-fmri/shared/things2/todo",
+    "image_path": "/srv/eeg_reconstruction/shared/natural_scenes_dataset/nsd_stimuli.hdf5",
+    "caption_path": "/srv/eeg_reconstruction/shared/biosemi-dataset/captions.pkl",
+    "embedding_path": "/srv/eeg_reconstruction/shared/biosemi-dataset",
     "cache_dir":"/srv/eeg_reconstruction/shared"
 }

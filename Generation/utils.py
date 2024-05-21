@@ -1,41 +1,8 @@
 import numpy as np
-import math
 import torch
 import os
-import sys
-import time
 from torch import inf
 import wandb
-
-class NativeScaler:
-    state_dict_key = "amp_scaler"
-
-    def __init__(self):
-        self._scaler = torch.cuda.amp.GradScaler()
-
-    def __call__(self, loss, optimizer, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
-        self._scaler.scale(loss).backward(create_graph=create_graph)
-        if update_grad:
-            if clip_grad is not None:
-                assert parameters is not None
-                self._scaler.unscale_(optimizer)  # unscale the gradients of optimizer's assigned params in-place
-                norm = torch.nn.utils.clip_grad_norm_(parameters, clip_grad)
-            else:
-                self._scaler.unscale_(optimizer)
-                norm = get_grad_norm_(parameters)
-            self._scaler.step(optimizer)
-            self._scaler.update()
-        else:
-            norm = None
-        return norm
-
-    def state_dict(self):
-        return self._scaler.state_dict()
-
-    def load_state_dict(self, state_dict):
-        self._scaler.load_state_dict(state_dict)
-        
-
 
 def get_grad_norm_(parameters, norm_type: float = 2.0):
     if isinstance(parameters, torch.Tensor):
@@ -50,80 +17,7 @@ def get_grad_norm_(parameters, norm_type: float = 2.0):
     else:
         total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), norm_type).to(device) for p in parameters]), norm_type)
     return total_norm
-        
-def train_one_epoch(model, data_loader, optimizer, device, epoch, 
-                        loss_scaler, log_writer=None, config=None, start_time=None, model_without_ddp=None, 
-                        img_feature_extractor=None, preprocess=None):
-    model.train(True)
-    optimizer.zero_grad()
-    total_loss = []
-    total_cor = []
-    accum_iter = config.accum_iter
-    for data_iter_step, (data_dcit) in enumerate(data_loader):
-        
-        # we use a per iteration (instead of per epoch) lr scheduler
-        # print(data_iter_step)
-        # print(len(data_loader))
-        
-        if data_iter_step % accum_iter == 0:
-            adjust_learning_rate(optimizer, data_iter_step / len(data_loader) + epoch, config)
-        samples = data_dcit['eeg']
-        
-        img_features = None
-        valid_idx = None
-        if img_feature_extractor is not None:
-            images = data_dcit['image']
-            valid_idx = torch.nonzero(images.sum(dim=(1,2,3)) != 0).squeeze(1)
-            img_feature_extractor.eval()
-            with torch.no_grad():
-                img_features = img_feature_extractor(preprocess(images[valid_idx]).to(device))['layer2']
-        samples = samples.to(device)
-        # img_features = img_features.to(device)
-
-        optimizer.zero_grad()
-        with torch.cuda.amp.autocast(enabled=True):
-            loss, pred, _ = model(samples, img_features, valid_idx=valid_idx, mask_ratio=config.mask_ratio)
-        # loss.backward()
-        # norm = torch.nn.utils.clip_grad_norm_(model.parameters(), config.clip_grad)
-        # optimizer.step()
-
-        loss_value = loss.item()
-
-        if not math.isfinite(loss_value):
-            print(f"Loss is {loss_value}, stopping training at step {data_iter_step} epoch {epoch}")
-            sys.exit(1)
-
-        # loss /= accum_iter
-        loss_scaler(loss, optimizer, parameters=model.parameters(), clip_grad=config.clip_grad)
-
-        # if (data_iter_step + 1) % accum_iter == 0:
-        # cal the cor
-        pred = pred.to('cpu').detach()
-        samples = samples.to('cpu').detach()
-        # pred = pred.transpose(1,2) #model_without_ddp.unpatchify(pred)
-        pred = model_without_ddp.unpatchify(pred)
-            
-        cor = torch.mean(torch.tensor([torch.corrcoef(torch.cat([p[0].unsqueeze(0), s[0].unsqueeze(0)],axis=0))[0,1] for p, s in zip(pred, samples)])).item()
-        optimizer.zero_grad()
-
-        total_loss.append(loss_value)
-        total_cor.append(cor)
-        if device == torch.device('cuda'):
-            lr = optimizer.param_groups[0]["lr"]
-            print('train_loss_step:', np.mean(total_loss), 'lr:', lr, 'cor', np.mean(total_cor))
-
-    if log_writer is not None:
-        lr = optimizer.param_groups[0]["lr"]
-        log_writer.log('train_loss_step', np.mean(total_loss), step=epoch)
-        log_writer.log('lr', lr, step=epoch)
-        log_writer.log('cor', np.mean(total_cor), step=epoch)
-        if start_time is not None:
-            log_writer.log('time (min)', (time.time() - start_time)/60.0, step=epoch)
-    if config.local_rank == 0:        
-        print(f'[Epoch {epoch}] loss: {np.mean(total_loss)}')
-
-    return np.mean(total_cor)
-
+   
 def get_1d_sincos_pos_embed(embed_dim, length, cls_token=False):
     """
     grid_size: int of the grid height and width
@@ -181,62 +75,21 @@ def interpolate_pos_embed(model, checkpoint_model):
             new_pos_embed = torch.cat((extra_tokens, pos_tokens), dim=1)
             checkpoint_model['pos_embed'] = new_pos_embed
 
+def batchwise_cosine_similarity(Z,B):
+    Z = Z.flatten(1)
+    B = B.flatten(1).T
+    Z_norm = torch.linalg.norm(Z, dim=1, keepdim=True)  # Size (n, 1).
+    B_norm = torch.linalg.norm(B, dim=0, keepdim=True)  # Size (1, b).
+    cosine_similarity = ((Z @ B) / (Z_norm @ B_norm)).T
+    return cosine_similarity
 
-def adjust_learning_rate(optimizer, epoch, config):
-    """Decay the learning rate with half-cycle cosine after warmup"""
-    if epoch < config.warmup_epochs:
-        lr = config.lr * epoch / config.warmup_epochs 
-    else:
-        lr = config.min_lr + (config.lr - config.min_lr) * 0.5 * \
-            (1. + math.cos(math.pi * (epoch - config.warmup_epochs) / (config.num_epoch - config.warmup_epochs)))
-    for param_group in optimizer.param_groups:
-        if "lr_scale" in param_group:
-            param_group["lr"] = lr * param_group["lr_scale"]
-        else:
-            param_group["lr"] = lr
-    return lr
-
-
-def save_model(config, epoch, model, optimizer, loss_scaler):
-    
-    to_save = {
-        'model': model.state_dict(),
-        'optimizer': optimizer.state_dict(),
-        'epoch': epoch,
-        'scaler': loss_scaler.state_dict(),
-        'config': config,
-    }
-    torch.save(to_save, '/home/weichen/projects/shiyin/DreamDiffusion.pth')
-    
-
-def load_model(config, model, checkpoint_path ):
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    model.load_state_dict(checkpoint['model'])
-    print(f'Model loaded with {checkpoint_path}')
-    
-
-def patchify(imgs, patch_size):
-    """
-    imgs: (N, 1, num_voxels)
-    x: (N, L, patch_size)
-    """
-    p = patch_size
-    assert imgs.ndim == 3 and imgs.shape[2] % p == 0
-
-    h = imgs.shape[2] // p
-    x = imgs.reshape(shape=(imgs.shape[0], h, p))
-    return x
-
-def unpatchify(x, patch_size):
-    """
-    x: (N, L, patch_size)
-    imgs: (N, 1, num_voxels)
-    """
-    p = patch_size
-    h = x.shape[1]
-    
-    imgs = x.reshape(shape=(x.shape[0], 1, h * p))
-    return imgs
+def topk(similarities,labels,k=5):
+    if k > similarities.shape[0]:
+        k = similarities.shape[0]
+    topsum=0
+    for i in range(k):
+        topsum += torch.sum(torch.argsort(similarities,axis=1)[:,-(i+1)] == labels)/len(labels)
+    return topsum
 
 class wandb_logger:
     def __init__(self, config):
@@ -247,7 +100,6 @@ class wandb_logger:
             config=config,
             entity=config['entity'],            
             )
-
 
         self.config = config
         self.step = None
