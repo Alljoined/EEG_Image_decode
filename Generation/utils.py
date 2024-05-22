@@ -287,3 +287,19 @@ class wandb_logger:
 
     def watch(self, model, log):
         wandb.watch(model, log)
+
+def batchwise_cosine_similarity(Z,B):
+    Z = Z.flatten(1)
+    B = B.flatten(1).T
+    Z_norm = torch.linalg.norm(Z, dim=1, keepdim=True)  # Size (n, 1).
+    B_norm = torch.linalg.norm(B, dim=0, keepdim=True)  # Size (1, b).
+    cosine_similarity = ((Z @ B) / (Z_norm @ B_norm)).T
+    return cosine_similarity
+
+def topk(similarities,labels,k=5):
+    if k > similarities.shape[0]:
+        k = similarities.shape[0]
+    topsum=0
+    for i in range(k):
+        topsum += torch.sum(torch.argsort(similarities,axis=1)[:,-(i+1)] == labels)/len(labels)
+    return topsum

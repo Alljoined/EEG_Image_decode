@@ -8,7 +8,7 @@ from eegdatasets_leaveone import EEGDataset
 from einops.layers.torch import Rearrange
 from lavis.models.clip_models.loss import ClipLoss
 from torch.utils.data import DataLoader
-import random
+import utils
 from utils import wandb_logger
 import csv
 from torch import Tensor
@@ -159,142 +159,87 @@ class ATM_S_reconstruction_scale_0_1000(nn.Module):
         return out  
     
       
-
-def train_model(eegmodel, imgmodel, dataloader, optimizer, device, text_features_all, img_features_all):
+def train_model(eegmodel, dataloader, optimizer, device):
     eegmodel.train()
-    text_features_all = text_features_all.to(device).float() # (n_cls, d)
-    img_features_all = (img_features_all[::10]).to(device).float()
     total_loss = 0
-    correct = 0
-    total = 0
+    fwd_percent_correct = 0
+    bwd_percent_correct = 0
     alpha=0.9
-    features_list = []  # List to store features
-    save_features= True
-    ridge_lambda = 0.1
     mse_loss_fn = nn.MSELoss()
-    for batch_idx, (eeg_data, labels, text, text_features, img, img_features) in enumerate(dataloader):
+    for batch_idx, (eeg_data, text, text_features, img, img_features) in enumerate(dataloader):
         eeg_data = eeg_data.to(device)
-        text_features = text_features.to(device).float()
-        img_features = img_features.to(device).float()
-        labels = labels.to(device)
+        text_features = text_features.to(device).float() # Already normalized
+        img_features = img_features.to(device).float() # Already normalized
         
         optimizer.zero_grad()
-        eeg_features = eegmodel(eeg_data[:, :, :250]).float()
-        # img_features_outputs = regression(eeg_features).float()
-        features_list.append(eeg_features)
+        eeg_features = eegmodel(eeg_data).float()
+        eeg_features_norm = nn.functional.normalize(eeg_features.flatten(1), dim=-1)
+
         logit_scale = eegmodel.logit_scale
-        img_loss = eegmodel.loss_func(eeg_features, img_features, logit_scale)
-        text_loss = eegmodel.loss_func(eeg_features, text_features, logit_scale)
+        img_loss = eegmodel.loss_func(eeg_features_norm, img_features, logit_scale)
+        text_loss = eegmodel.loss_func(eeg_features_norm, text_features, logit_scale)
         contrastive_loss = img_loss
-        # print("text_loss", text_loss)
-        # print("img_loss", img_loss)
-        
         regress_loss =  mse_loss_fn(eeg_features, img_features)
-        # l2_norm = sum(p.pow(2.0).sum() for p in model.parameters())
-        # loss = (regress_loss + ridge_lambda * l2_norm)       
+  
         loss = (alpha * regress_loss *10 + (1 - alpha) * contrastive_loss*10)
         loss.backward()
         
         optimizer.step()
         total_loss += loss.item()
-        
-        # logits = logit_scale * eeg_features @ text_features_all.T # (n_batch, n_cls)
-        
-        logits_img = logit_scale * eeg_features @ img_features_all.T
-        # logits_text = logit_scale * eeg_features @ text_features_all.T
-        # logits_single = (logits_text + logits_img) / 2.0        
-        # logits_text = logit_scale * eeg_features @ text_features_all.T
-        logits_single = logits_img
-        predicted = torch.argmax(logits_single, dim=1) # (n_batch, ) \in {0, 1, ..., n_cls-1}
 
-        batch_size = predicted.shape[0]
-        total += batch_size
-        correct += (predicted == labels).sum().item()
+        # 1024-way top-1 accuracy
+        labels = torch.arange(len(eeg_data)).to(device)
+        fwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(eeg_features_norm, img_features), labels, k=1).item()
+        bwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(img_features, eeg_features_norm), labels, k=1).item()
 
     average_loss = total_loss / (batch_idx+1)
-    accuracy = correct / total
-    return average_loss, accuracy
+    fwd_percent_correct = fwd_percent_correct / (batch_idx+1)
+    bwd_percent_correct = bwd_percent_correct / (batch_idx+1)
+    return average_loss, fwd_percent_correct, bwd_percent_correct
 
-def evaluate_model(eegmodel, imgmodel, dataloader, device, text_features_all, img_features_all, k):
+def evaluate_model(eegmodel, dataloader, device, text_features_all, img_features_all, k):
     eegmodel.eval()
     text_features_all = text_features_all.to(device).float()
     img_features_all = img_features_all.to(device).float()
     total_loss = 0
-    correct = 0
-    total = 0
-    alpha =0.9
-    top5_correct = 0
-    top5_correct_count = 0
-    
-    all_labels = set(range(text_features_all.size(0)))
-    top5_acc = 0
+    fwd_percent_correct = 0
+    bwd_percent_correct = 0
+    alpha = 0.9
+
     mse_loss_fn = nn.MSELoss()
-    ridge_lambda = 0.1
+    # ridge_lambda = 0.1
     with torch.no_grad():
-        for batch_idx, (eeg_data, labels, text, text_features, img, img_features) in enumerate(dataloader):
+        for batch_idx, (eeg_data, text, text_features, img, img_features) in enumerate(dataloader):
             eeg_data = eeg_data.to(device)
-            text_features = text_features.to(device).float()
-            labels = labels.to(device)
-            img_features = img_features.to(device).float()
-            eeg_features = eegmodel(eeg_data[:, :, :250]).float()
-
-            logit_scale = eegmodel.logit_scale 
-                   
-            regress_loss =  mse_loss_fn(eeg_features, img_features)
-            # print("eeg_features", eeg_features.shape)
-            # print(torch.std(eeg_features, dim=-1))
-            # print(torch.std(img_features, dim=-1))
-            # l2_norm = sum(p.pow(2.0).sum() for p in model.parameters())
-            # loss = (regress_loss + ridge_lambda * l2_norm)       
-            img_loss = eegmodel.loss_func(eeg_features, img_features, logit_scale)
-            text_loss = eegmodel.loss_func(eeg_features, text_features, logit_scale)
-            contrastive_loss = img_loss
-            # loss = img_loss + text_loss
-
-            regress_loss =  mse_loss_fn(eeg_features, img_features)
-            # print("text_loss", text_loss)
-            # print("img_loss", img_loss)
-            # print("regress_loss", regress_loss)            
-            # l2_norm = sum(p.pow(2.0).sum() for p in model.parameters())
-            # loss = (regress_loss + ridge_lambda * l2_norm)       
-            loss = alpha * regress_loss *10 + (1 - alpha) * contrastive_loss*10
-            # print("loss", loss)
-            total_loss += loss.item()
+            text_features = text_features.to(device).float() # Already normalized
+            img_features = img_features.to(device).float() # Already normalized
             
-            for idx, label in enumerate(labels):
-                
-                possible_classes = list(all_labels - {label.item()})
-                selected_classes = random.sample(possible_classes, k-1) + [label.item()]
-                selected_img_features = img_features_all[selected_classes]
-                if k==200:
-                    
-                    logits_img = logit_scale * eeg_features[idx] @ selected_img_features.T
-                    logits_single = logits_img
-                    # print("logits_single", logits_single.shape)
-                    
-                    # predicted_label = selected_classes[torch.argmax(logits_single).item()]
-                    predicted_label = selected_classes[torch.argmax(logits_single).item()] # (n_batch, ) \in {0, 1, ..., n_cls-1}
-                    if predicted_label == label.item():
-                        # print("predicted_label", predicted_label)
-                        correct += 1
-                    
-                    
-                    
-                    
-                    # print("logits_single", logits_single)
-                    _, top5_indices = torch.topk(logits_single, 5, largest =True)
-                                                           
-                    
-                    if label.item() in [selected_classes[i] for i in top5_indices.tolist()]:                
-                        top5_correct_count+=1                                
-                    total += 1
-                    
-    print("total_loss", total_loss)
-    print("batch_idx+1", batch_idx+1)                
-    average_loss = total_loss / (batch_idx+1)
-    accuracy = correct / total
-    top5_acc = top5_correct_count / total
-    return average_loss, accuracy, top5_acc
+            eeg_features = eegmodel(eeg_data).float()
+            eeg_features_norm = nn.functional.normalize(eeg_features.flatten(1), dim=-1)
+
+            logit_scale = eegmodel.logit_scale
+            img_loss = eegmodel.loss_func(eeg_features_norm, img_features, logit_scale)
+            text_loss = eegmodel.loss_func(eeg_features_norm, text_features, logit_scale)
+            contrastive_loss = img_loss
+            regress_loss =  mse_loss_fn(eeg_features, img_features)
+    
+            loss = (alpha * regress_loss *10 + (1 - alpha) * contrastive_loss*10)
+            total_loss += loss.item()
+
+            # TODO: Evaluate on average of test images
+
+            # 1024-way top-1 accuracy
+            labels = torch.arange(len(eeg_data)).to(device)
+            fwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(eeg_features_norm, img_features), labels, k=1).item()
+            bwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(img_features, eeg_features_norm), labels, k=1).item()
+
+            # TODO: k-way top 5 accuracy
+                        
+        average_loss = total_loss / (batch_idx+1)
+        fwd_percent_correct = fwd_percent_correct / (batch_idx+1)
+        bwd_percent_correct = bwd_percent_correct / (batch_idx+1)
+    
+    return average_loss, fwd_percent_correct, bwd_percent_correct
 
 def main_train_loop(sub, eeg_model, img_model, train_dataloader, test_dataloader, optimizer, device, 
                     text_features_train_all, text_features_test_all, img_features_train_all, img_features_test_all, config, logger=None):
@@ -313,8 +258,7 @@ def main_train_loop(sub, eeg_model, img_model, train_dataloader, test_dataloader
     results = []  # List to store results for each epoch
     current_time = datetime.datetime.now().strftime("%m-%d_%H-%M")  
     for epoch in range(config['epochs']):
-        
-        train_loss, train_accuracy = train_model(eeg_model, img_model, train_dataloader, optimizer, device, text_features_train_all, img_features_train_all)
+        train_loss, train_fwd, train_bwd = train_model(eeg_model, train_dataloader, optimizer, device)
         if (epoch +1) % 5 == 0:                    
             
             if config['insubject']==True:       
@@ -327,43 +271,45 @@ def main_train_loop(sub, eeg_model, img_model, train_dataloader, test_dataloader
                 torch.save(eeg_model.state_dict(), file_path)
             print(f"model saved in {file_path}!")
         train_losses.append(train_loss)
-        train_accuracies.append(train_accuracy)
+        train_accuracies.append(train_fwd)
         regression = None
         
-        test_loss, test_accuracy, top5_acc = evaluate_model(eeg_model, regression, test_dataloader, device, text_features_test_all, img_features_test_all,k=200)
+        test_loss, test_fwd, test_bwd = evaluate_model(eeg_model, test_dataloader, device, text_features_test_all, img_features_test_all, k=200)
         test_losses.append(test_loss)
-        test_accuracies.append(test_accuracy)        
+        test_accuracies.append(test_fwd)        
         # Append results for this epoch
         epoch_results = {
-        "epoch": epoch + 1,
-        "train_loss": train_loss,
-        "train_accuracy": train_accuracy,
-        "test_loss": test_loss,
-        "test_accuracy": test_accuracy,
-        "top5_acc":top5_acc
+            "epoch": epoch + 1,
+            "train_loss": train_loss,
+            "train_fwd": train_fwd,
+            "train_bwd": train_bwd,
+            "test_loss": test_loss,
+            "test_fwd": test_fwd,
+            "test_bwd": test_bwd
         }
         results.append(epoch_results)
         
-        if test_accuracy > best_accuracy:
-            best_accuracy = test_accuracy
-            best_model_weights = eeg_model.state_dict().copy()
-            best_epoch_info = {
-                "epoch": epoch + 1,
-                "train_loss": train_loss,
-                "train_accuracy": train_accuracy,
-                "test_loss": test_loss,
-                "test_accuracy": test_accuracy,
-            }
+        # if test_accuracy > best_accuracy:
+        #     best_accuracy = test_accuracy
+        #     best_model_weights = eeg_model.state_dict().copy()
+        #     best_epoch_info = {
+        #         "epoch": epoch + 1,
+        #         "train_loss": train_loss,
+        #         "train_accuracy": train_accuracy,
+        #         "test_loss": test_loss,
+        #         "test_accuracy": test_accuracy,
+        #     }
         logger.log({
-            "Train Loss": train_loss,
-            "Train Accuracy": train_accuracy,
-            "Test Loss": test_loss,
-            "Test Accuracy": test_accuracy,
-            "Epoch": epoch
+            "epoch": epoch + 1,
+            "train/loss": train_loss,
+            "train/fwd_pct_correct": train_fwd,
+            "train/bwd_pct_correct": train_bwd,
+            "test/loss": test_loss,
+            "test/fwd_pct_correct": test_fwd,
+            "test/bwd_pct_correct": test_bwd
         })
 
-        print(f"Epoch {epoch + 1}/{config['epochs']} - Train Loss: {train_loss:.4f}, Train Accuracy: {train_accuracy:.4f}, Test Loss: {test_loss:.4f}, Test Accuracy: {test_accuracy:.4f}, Top5 Accuracy: {top5_acc:.4f}")        
-  
+        print(f"Epoch {epoch + 1}/{config['epochs']} - Train Loss: {train_loss:.4f}, Train fwd: {train_fwd:.4f}, Test Loss: {test_loss:.4f}, Test fwd: {test_fwd:.4f}")          
     
     # model.load_state_dict(best_model_weights)
 
@@ -410,7 +356,7 @@ def main():
         "data_path": "/srv/eeg_reconstruction/shared/things_eeg_2/Preprocessed_data_250Hz",
         "project": "EEG_image_generation_pretrain",
         "entity": "alljoined1",
-        "name": "lr=3e-4_img_pos_pro_eeg",
+        "name": "original_arch_alljoined_truncated",
         "lr": 3e-4,
         "epochs": 40,
         "batch_size": 1024,
