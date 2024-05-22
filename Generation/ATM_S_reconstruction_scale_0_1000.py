@@ -9,7 +9,6 @@ from eegdatasets_leaveone import EEGDataset
 from einops.layers.torch import Rearrange
 from lavis.models.clip_models.loss import ClipLoss
 from torch.utils.data import DataLoader
-import random
 import utils
 from utils import wandb_logger
 import csv
@@ -155,7 +154,7 @@ class ATM_S_reconstruction_scale_0_1000(nn.Module):
         x = self.subject_wise_linear[0](x)
         # print(f'After subject-specific linear transformation shape: {x.shape}')
         eeg_embedding = self.enc_eeg(x)
-        print(f'After enc_eeg shape: {eeg_embedding.shape}')
+        # print(f'After enc_eeg shape: {eeg_embedding.shape}')
         out = self.proj_eeg(eeg_embedding)
         return out  
 
@@ -187,10 +186,10 @@ def train_model(eegmodel, dataloader, optimizer, device):
         optimizer.step()
         total_loss += loss.item()
 
-        # 10-way top-1 accuracy
-        labels = torch.arange(10).to(device)
-        fwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(eeg_features_norm[:10], img_features[:10]), labels, k=1).item()
-        bwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(img_features[:10], eeg_features_norm[:10]), labels, k=1).item()
+        # 1024-way top-1 accuracy
+        labels = torch.arange(len(eeg_data)).to(device)
+        fwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(eeg_features_norm, img_features), labels, k=1).item()
+        bwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(img_features, eeg_features_norm), labels, k=1).item()
 
     average_loss = total_loss / (batch_idx+1)
     fwd_percent_correct = fwd_percent_correct / (batch_idx+1)
@@ -228,16 +227,16 @@ def evaluate_model(eegmodel, dataloader, device, text_features_all, img_features
 
             # TODO: Evaluate on average of test images
 
-            # 10-way top-1 accuracy
-            labels = torch.arange(10).to(device)
-            fwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(eeg_features_norm[:10], img_features[:10]), labels, k=1).item()
-            bwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(img_features[:10], eeg_features_norm[:10]), labels, k=1).item()
+            # 1024-way top-1 accuracy
+            labels = torch.arange(len(eeg_data)).to(device)
+            fwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(eeg_features_norm, img_features), labels, k=1).item()
+            bwd_percent_correct += utils.topk(utils.batchwise_cosine_similarity(img_features, eeg_features_norm), labels, k=1).item()
 
             # TODO: k-way top 5 accuracy
                         
-    average_loss = total_loss / (batch_idx+1)
-    fwd_percent_correct = fwd_percent_correct / (batch_idx+1)
-    bwd_percent_correct = bwd_percent_correct / (batch_idx+1)
+        average_loss = total_loss / (batch_idx+1)
+        fwd_percent_correct = fwd_percent_correct / (batch_idx+1)
+        bwd_percent_correct = bwd_percent_correct / (batch_idx+1)
     
     return average_loss, fwd_percent_correct, bwd_percent_correct
 
@@ -342,23 +341,24 @@ def main_train_loop(sub, eeg_model, train_dataloader, test_dataloader, optimizer
 
 
 def main():
-    Encoder_list = ['EEGNetv4_Encoder', 'ATCNet_Encoder', 'EEGConformer_Encoder', 'EEGITNet_Encoder', 'ShallowFBCSPNet_Encoder'] 
+    subjects = ['sub-02']
+
     config = {
         "data_path": "/srv/eeg_reconstruction/shared/things_eeg_2/Preprocessed_data_250Hz",
         "project": "Alljoined1_image_generation_pretrain",
         "entity": "alljoined1",
-        "name": "lr=3e-4_img_pos_pro_eeg",
-        "lr": 3e-4,
+        "name": "lr=3e-3, 1000-way",
+        "lr": 3e-3,
         "epochs": 40,
         "batch_size": 1024,
         "logger": True,
         "insubject": True,
         "encoder_type": 'ATM_S_reconstruction_scale_0_1000',
-        "img_encoder": 'Proj_img'
+        "img_encoder": 'Proj_img',
+        "subjects": subjects
     }
 
     device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
-    subjects = ['sub-01']
 
     for sub in subjects:
         # Instantiate new models for each subject
