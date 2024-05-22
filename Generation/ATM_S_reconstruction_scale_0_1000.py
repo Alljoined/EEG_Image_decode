@@ -420,7 +420,7 @@ def main():
         "img_encoder": 'Proj_img'
     }
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
     
     data_path = config['data_path']
     subjects = ['sub-01']
@@ -435,10 +435,11 @@ def main():
 
         print(f'Processing {sub}: number of parameters:', sum([p.numel() for p in eeg_model.parameters()]) + sum([p.numel() for p in img_model.parameters()]))
 
-        train_dataset = EEGDataset(data_path, subjects=[sub] if config['insubject'] else [], exclude_subject=sub if not config['insubject'] else None, train=True)
-        test_dataset = EEGDataset(data_path, subjects=[sub] if config['insubject'] else [], exclude_subject=sub if not config['insubject'] else None, train=False)
+        train_dataset = EEGDataset(subjects=[sub] if config['insubject'] else [], exclude_subject=sub if not config['insubject'] else None, split="train")
+        test_dataset = EEGDataset(subjects=[sub] if config['insubject'] else [], exclude_subject=sub if not config['insubject'] else None, split="test")
         train_loader = DataLoader(train_dataset, batch_size=config['batch_size'], shuffle=True, num_workers=0, drop_last=True)
-        test_loader = DataLoader(test_dataset, batch_size=1, shuffle=True, num_workers=0, drop_last=True)
+        test_loader = DataLoader(test_dataset, batch_size=config['batch_size'], shuffle=True, num_workers=0, drop_last=True)
+
 
         text_features_train_all = train_dataset.text_features
         text_features_test_all = test_dataset.text_features
