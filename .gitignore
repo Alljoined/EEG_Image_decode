@@ -32,3 +32,4 @@ Retrieval/wandb
 *.pt
 *.pth
 Retrieval/__pycache__/utils.cpython-310.pyc
+Generation/components/__pycache__
