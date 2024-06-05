@@ -43,7 +43,7 @@ pip install einops
 ```
 Additional environments needed to run all the code:
 ```
-pip install open_clip_torch
+pip install git+https://github.com/openai/CLIP.git
 # LAVIS makes it possible to use any published CLIP base model.
 git clone https://github.com/salesforce/LAVIS.git
 cd LAVIS
@@ -51,6 +51,9 @@ pip install -e .
 
 pip install transformers==0.27.0
 pip install diffusers==0.24.0
+
+pip install setuptools==69.5.1
+pip install packaging==24.0
 
 #Below are the braindecode installation commands for the most common use cases.
 pip install braindecode==0.8.1
