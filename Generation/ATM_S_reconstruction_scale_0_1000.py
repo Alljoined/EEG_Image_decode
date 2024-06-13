@@ -1,7 +1,6 @@
 import os
 import sys
 import torch
-from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import numpy as np
 import torch.nn as nn
@@ -34,7 +33,6 @@ class ATM_S_reconstruction_scale_0_1000(nn.Module):
         eeg_embedding = self.enc_eeg(x)
         out = self.proj_eeg(eeg_embedding)
         return out
-
 
 def train_model(
     eegmodel, dataloader, optimizer, device, text_features_all, img_features_all
@@ -253,11 +251,12 @@ def main_train_loop(
             }
         logger.log(
             {
-                "Train Loss": train_loss,
-                "Train Accuracy": train_accuracy,
-                "Test Loss": test_loss,
-                "Test Accuracy": test_accuracy,
-                "Epoch": epoch,
+                "train/loss": train_loss,
+                "train/1024way-top1 accuracy": train_accuracy,
+                "test/loss": test_loss,
+                "test/200way-top1 accuracy": test_accuracy,
+                "test/200way-top5 accuracy": top5_acc,
+                "epoch": epoch,
             }
         )
 

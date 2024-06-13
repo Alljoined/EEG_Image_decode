@@ -33,3 +33,6 @@ Retrieval/wandb
 *.pth
 Retrieval/__pycache__/utils.cpython-310.pyc
 Generation/components/__pycache__
+Generation/umap_model.pkl
+Generation/__pycache__/eegdatasets_leaveone.cpython-310.pyc
+Generation/__pycache__/utils.cpython-310.pyc
